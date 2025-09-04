@@ -1,65 +1,97 @@
 "use client"
 
 import type React from "react"
-
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect, useActionState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Card, CardContent } from "@/components/ui/card"
 import { Camera, Upload, X, Loader2 } from "lucide-react"
-import { submitRegistration } from "@/lib/actions"
-import { uploadImageToCloud, base64ToBlob } from "@/lib/cloud-storage"
+import { submitRegistration, uploadImageToCloud } from "@/lib/actions"
+import { User } from "@/lib/models"
 
-interface FormData {
-  name: string
-  mobile: string
-  gender: string
-  aadharNumber: string
-  photo: string | null // Now stores cloud URL instead of base64
-}
 
 interface RegistrationFormProps {
   onDataSubmit: (data: FormData) => void
 }
 
 export function RegistrationForm({ onDataSubmit }: RegistrationFormProps) {
-  const [formData, setFormData] = useState<FormData>({
-    name: "",
-    mobile: "",
-    gender: "",
-    aadharNumber: "",
-    photo: null,
-  })
+
 
   const [isCapturing, setIsCapturing] = useState(false)
   const [stream, setStream] = useState<MediaStream | null>(null)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isUploading, setIsUploading] = useState(false) // Added upload state
   const [capturedImageData, setCapturedImageData] = useState<string | null>(null) // Store base64 for preview
+  const [photoFile, setPhotoFile] = useState<File | null>(null)
+  const [prefersFileCapture, setPrefersFileCapture] = useState(false) // Prefer file capture on mobile/iOS
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null) // File input fallback
+  const formRef = useRef<HTMLFormElement>(null) // Add form ref
 
-  const handleInputChange = (field: keyof FormData, value: string) => {
-    setFormData((prev) => ({ ...prev, [field]: value }))
-  }
+  useEffect(() => {
+    // Prefer file capture on iOS Safari or when getUserMedia is unavailable / insecure context
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent : ""
+    const isIOS = /iP(hone|od|ad)/.test(ua)
+    const isSafari = /^((?!chrome|android).)*safari/i.test(ua)
+    const noMedia = typeof navigator === "undefined" || !("mediaDevices" in navigator)
+    const insecure = typeof isSecureContext !== "undefined" ? !isSecureContext : false
+
+    if (isIOS && isSafari) setPrefersFileCapture(true)
+    if (noMedia || insecure) setPrefersFileCapture(true)
+
+    return () => {
+      // Stop camera if active
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop())
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
 
   const startCamera = async () => {
     try {
+      console.log("\nStarting camera....")
       const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480 },
+        video: {
+          facingMode: { ideal: "environment" }, // prefer rear camera
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
       })
-      setStream(mediaStream)
+
       setIsCapturing(true)
 
       if (videoRef.current) {
+        videoRef.current.muted = true
+        videoRef.current.setAttribute("playsinline", "true")
+        videoRef.current.playsInline = true
         videoRef.current.srcObject = mediaStream
+
+        await new Promise<void>((resolve) => {
+          const onLoaded = () => {
+            console.log("[v0] video loadedmetadata:", videoRef.current?.videoWidth, "x", videoRef.current?.videoHeight)
+            videoRef.current?.removeEventListener("loadedmetadata", onLoaded)
+            resolve()
+          }
+          videoRef.current?.addEventListener("loadedmetadata", onLoaded, { once: true })
+        })
+
+        try {
+          await videoRef.current.play()
+          console.log("[v0] video.play() resolved; readyState:", videoRef.current.readyState)
+        } catch (err) {
+          console.log("[v0] video.play() rejected; will rely on user gesture:", (err as Error)?.message)
+        }
       }
+
+      setStream(mediaStream)
     } catch (error) {
       console.error("Error accessing camera:", error)
-      alert("Unable to access camera. Please check permissions.")
+      alert("Unable to access camera. Please check permissions.",)
     }
   }
 
@@ -77,67 +109,82 @@ export function RegistrationForm({ onDataSubmit }: RegistrationFormProps) {
       const video = videoRef.current
       const context = canvas.getContext("2d")
 
-      canvas.width = video.videoWidth
-      canvas.height = video.videoHeight
+      if (!video.videoWidth || !video.videoHeight) {
+        await new Promise<void>((resolve) => {
+          const onCanPlay = () => {
+            video.removeEventListener("canplay", onCanPlay)
+            resolve()
+          }
+          video.addEventListener("canplay", onCanPlay, { once: true })
+        })
+      }
+      // wait a frame so the first image is actually rendered
+      await new Promise((r) => requestAnimationFrame(() => r(null as any)))
+
+      console.log("capturing with dimensions:", video.videoWidth, "x", video.videoHeight)
+      canvas.width = video.videoWidth || 720
+      canvas.height = video.videoHeight || 1280
 
       if (context) {
-        context.drawImage(video, 0, 0)
-        const photoDataUrl = canvas.toDataURL("image/jpeg", 0.8)
+        context.drawImage(video, 0, 0, canvas.width, canvas.height)
 
-        setCapturedImageData(photoDataUrl)
-        setIsUploading(true)
+        canvas.toBlob((blob) => {
+          if (!blob) return
+
+          const imageUrl = URL.createObjectURL(blob)
+          setCapturedImageData(imageUrl)
+
+          const file = new File([blob], `user-${Date.now()}.jpg`, { type: "image/jpeg" })
+          setPhotoFile(file)
+
+          console.log("Photo captured locally")
+        }, "image/jpeg", 0.9)
+
         stopCamera()
-
-        try {
-          // Convert base64 to blob and upload to cloud
-          const imageBlob = base64ToBlob(photoDataUrl)
-          const fileName = `photo-${Date.now()}.jpg`
-          const cloudImageUrl = await uploadImageToCloud(imageBlob, fileName)
-
-          // Store the cloud URL in form data
-          setFormData((prev) => ({ ...prev, photo: cloudImageUrl }))
-          console.log("[v0] Image uploaded to cloud:", cloudImageUrl)
-        } catch (error) {
-          console.error("[v0] Failed to upload image:", error)
-          alert("Failed to upload image. Please try again.")
-          setCapturedImageData(null)
-        } finally {
-          setIsUploading(false)
-        }
       }
     }
   }
 
   const removePhoto = () => {
-    setFormData((prev) => ({ ...prev, photo: null }))
-    setCapturedImageData(null) // Clear preview image
+    if (capturedImageData && capturedImageData.startsWith("blob:")) {
+      try {
+        URL.revokeObjectURL(capturedImageData)
+      } catch {
+        // no-op
+      }
+    }
+    setCapturedImageData(null)
+    setPhotoFile(null)
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-
-    if (!formData.name || !formData.mobile || !formData.gender || !formData.aadharNumber || !formData.photo) {
-      alert("Please fill in all required fields")
+  const registrationFormSubmission = async (prevData, formData: FormData) => {
+    // Validate photo is captured
+    if (!photoFile) {
+      alert("Please capture a photo before submitting")
       return
     }
 
-    setIsSubmitting(true)
+    formData.append('file', photoFile)
+    const { success, destination } = await uploadImageToCloud(formData)
 
-    try {
-      // Submit to server action (placeholder for now)
-      await submitRegistration(formData)
-      onDataSubmit(formData)
-      alert("Registration submitted successfully!")
-    } catch (error) {
-      console.error("Submission error:", error)
-      alert("Error submitting registration. Please try again.")
-    } finally {
-      setIsSubmitting(false)
-    }
+    console.debug("\n Image destination ==> ", destination)
+
+    const user = new User({
+      name: formData.get("name") as string,
+      mobile: formData.get("mobile") as string,
+      gender: formData.get("gender") as "male" | "female" | "other",
+      aadharNumber: formData.get("aadharNumber") as string,
+      photoUrl: destination as string,
+    })
+    await user.save()
+    console.log("User created ==> ", user)
   }
 
+  const [state, formAction, isPending] = useActionState(registrationFormSubmission, {})
+
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form action={formAction} className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="space-y-2">
           <Label htmlFor="name" className="text-sm font-medium">
@@ -146,9 +193,8 @@ export function RegistrationForm({ onDataSubmit }: RegistrationFormProps) {
           <Input
             id="name"
             type="text"
+            name="name"
             placeholder="Enter your full name"
-            value={formData.name}
-            onChange={(e) => handleInputChange("name", e.target.value)}
             className="h-11"
             required
           />
@@ -161,9 +207,8 @@ export function RegistrationForm({ onDataSubmit }: RegistrationFormProps) {
           <Input
             id="mobile"
             type="tel"
+            name="mobile"
             placeholder="Enter 10-digit mobile number"
-            value={formData.mobile}
-            onChange={(e) => handleInputChange("mobile", e.target.value)}
             pattern="[0-9]{10}"
             maxLength={10}
             className="h-11"
@@ -175,7 +220,7 @@ export function RegistrationForm({ onDataSubmit }: RegistrationFormProps) {
           <Label htmlFor="gender" className="text-sm font-medium">
             Gender *
           </Label>
-          <Select value={formData.gender} onValueChange={(value) => handleInputChange("gender", value)}>
+          <Select name="gender">
             <SelectTrigger className="h-11">
               <SelectValue placeholder="Select gender" />
             </SelectTrigger>
@@ -195,8 +240,7 @@ export function RegistrationForm({ onDataSubmit }: RegistrationFormProps) {
             id="aadhar"
             type="text"
             placeholder="Enter 12-digit Aadhar number"
-            value={formData.aadharNumber}
-            onChange={(e) => handleInputChange("aadharNumber", e.target.value)}
+            name="aadharNumber"
             pattern="[0-9]{12}"
             maxLength={12}
             className="h-11"
@@ -208,12 +252,14 @@ export function RegistrationForm({ onDataSubmit }: RegistrationFormProps) {
       <div className="space-y-4">
         <Label className="text-sm font-medium">Photo Capture *</Label>
 
-        {!formData.photo && !isCapturing && !isUploading && (
+        {!photoFile && !isCapturing && (
           <Card className="border-2 border-dashed border-border">
-            <CardContent className="flex flex-col items-center justify-center py-8">
-              <Camera className="h-12 w-12 text-muted-foreground mb-4" />
-              <p className="text-sm text-muted-foreground mb-4 text-center">Capture your photo using the camera</p>
-              <Button type="button" onClick={startCamera} className="gap-2">
+            <CardContent className="flex flex-col items-center justify-center py-8 gap-3">
+              <Camera className="h-12 w-12 text-muted-foreground mb-1" />
+              <p className="text-sm text-muted-foreground text-center">
+                Capture your photo using the camera
+              </p>
+              <Button type="button" onClick={startCamera} className="gap-2" variant="default">
                 <Camera className="h-4 w-4" />
                 Start Camera
               </Button>
@@ -225,9 +271,15 @@ export function RegistrationForm({ onDataSubmit }: RegistrationFormProps) {
           <Card>
             <CardContent className="p-4">
               <div className="flex flex-col items-center space-y-4">
-                <video ref={videoRef} autoPlay playsInline className="w-full max-w-md rounded-lg border" />
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full max-w-md rounded-lg border aspect-video bg-black"
+                />
                 <div className="flex gap-2">
-                  <Button type="button" onClick={capturePhoto} className="gap-2" disabled={isUploading}>
+                  <Button type="button" onClick={capturePhoto} className="gap-2">
                     <Upload className="h-4 w-4" />
                     Capture Photo
                   </Button>
@@ -240,34 +292,14 @@ export function RegistrationForm({ onDataSubmit }: RegistrationFormProps) {
           </Card>
         )}
 
-        {isUploading && (
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex flex-col items-center space-y-4">
-                <div className="flex items-center gap-2">
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                  <p className="text-sm text-muted-foreground">Uploading image to cloud storage...</p>
-                </div>
-                {capturedImageData && (
-                  <img
-                    src={capturedImageData || "/placeholder.svg"}
-                    alt="Uploading photo"
-                    className="w-48 h-48 object-cover rounded-lg border opacity-50"
-                  />
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {formData.photo && !isUploading && (
+        {photoFile && (
           <Card>
             <CardContent className="p-4">
               <div className="flex flex-col items-center space-y-4">
                 <div className="relative">
                   <img
                     src={capturedImageData || "/placeholder.svg"}
-                    alt="Captured photo"
+                    alt="Captured or uploaded photo preview"
                     className="w-48 h-48 object-cover rounded-lg border"
                   />
                   <Button
@@ -292,8 +324,8 @@ export function RegistrationForm({ onDataSubmit }: RegistrationFormProps) {
         <canvas ref={canvasRef} className="hidden" />
       </div>
 
-      <Button type="submit" className="w-full h-12 text-base font-medium" disabled={isSubmitting || isUploading}>
-        {isSubmitting ? "Submitting..." : "Submit Registration"}
+      <Button type="submit" className="w-full h-12 text-base font-medium" disabled={isPending}>
+        {isPending ? <div className="flex items-center gap-4" > "Submitting..." <Loader2 className="animate-spin" /> </div> : "Submit Registration"}
       </Button>
     </form>
   )

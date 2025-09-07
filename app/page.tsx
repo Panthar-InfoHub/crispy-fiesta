@@ -1,13 +1,10 @@
 "use client"
 
-import { useState } from "react"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { RegistrationForm } from "@/components/registration-form"
-import { DataPreview } from "@/components/data-preview"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 export default function HomePage() {
-  const [formData, setFormData] = useState(null)
 
   return (
     <div className="min-h-screen bg-background p-4">
@@ -23,7 +20,7 @@ export default function HomePage() {
               Registration Form
             </TabsTrigger>
             <TabsTrigger value="preview" className="text-sm font-medium">
-              Data Preview
+              Face Match
             </TabsTrigger>
           </TabsList>
 
@@ -34,24 +31,20 @@ export default function HomePage() {
                 <CardDescription>Please fill in all required fields to complete your registration</CardDescription>
               </CardHeader>
               <CardContent>
-                <RegistrationForm onDataSubmit={setFormData} />
+                <RegistrationForm />
               </CardContent>
             </Card>
           </TabsContent>
 
           <TabsContent value="preview" className="space-y-6">
-            <Card className="shadow-lg">
-              <CardHeader>
-                <CardTitle className="text-xl font-semibold">Registration Data</CardTitle>
-                <CardDescription>Review your submitted information</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <DataPreview data={formData} />
-              </CardContent>
-            </Card>
+            Hii
           </TabsContent>
         </Tabs>
       </div>
+
+      <footer className="text-center py-4 text-sm text-muted-foreground">
+        Designed and Developed by Panthar Infohub
+      </footer>
     </div>
   )
 }

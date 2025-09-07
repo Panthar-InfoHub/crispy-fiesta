@@ -1,97 +1,90 @@
 "use client"
 
-import type React from "react"
-import { useState, useRef, useEffect, useActionState } from "react"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Card, CardContent } from "@/components/ui/card"
-import { Camera, Upload, X, Loader2 } from "lucide-react"
-import { submitRegistration, uploadImageToCloud } from "@/lib/actions"
-import { User } from "@/lib/models"
+import { getUploadSignedUrl, submitRegistration, uploadImageToCloud } from "@/lib/actions"
+import { Camera, Loader2, Upload, X } from "lucide-react"
+import { useActionState, useEffect, useRef, useState } from "react"
+import { toast } from "sonner"
 
 
-interface RegistrationFormProps {
-  onDataSubmit: (data: FormData) => void
-}
 
-export function RegistrationForm({ onDataSubmit }: RegistrationFormProps) {
+export function RegistrationForm() {
 
 
   const [isCapturing, setIsCapturing] = useState(false)
   const [stream, setStream] = useState<MediaStream | null>(null)
   const [capturedImageData, setCapturedImageData] = useState<string | null>(null) // Store base64 for preview
   const [photoFile, setPhotoFile] = useState<File | null>(null)
-  const [prefersFileCapture, setPrefersFileCapture] = useState(false) // Prefer file capture on mobile/iOS
+  const [videoReady, setVideoReady] = useState(false)
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null) // File input fallback
   const formRef = useRef<HTMLFormElement>(null) // Add form ref
 
-  useEffect(() => {
-    // Prefer file capture on iOS Safari or when getUserMedia is unavailable / insecure context
-    const ua = typeof navigator !== "undefined" ? navigator.userAgent : ""
-    const isIOS = /iP(hone|od|ad)/.test(ua)
-    const isSafari = /^((?!chrome|android).)*safari/i.test(ua)
-    const noMedia = typeof navigator === "undefined" || !("mediaDevices" in navigator)
-    const insecure = typeof isSecureContext !== "undefined" ? !isSecureContext : false
-
-    if (isIOS && isSafari) setPrefersFileCapture(true)
-    if (noMedia || insecure) setPrefersFileCapture(true)
-
-    return () => {
-      // Stop camera if active
-      if (stream) {
-        stream.getTracks().forEach((t) => t.stop())
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
 
   const startCamera = async () => {
     try {
-      console.log("\nStarting camera....")
+      console.log("Starting camera....")
+
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: { ideal: "environment" }, // prefer rear camera
+          facingMode: { ideal: "environment" },
           width: { ideal: 1280 },
           height: { ideal: 720 },
         },
         audio: false,
       })
 
+      console.log("Media stream acquired:", mediaStream)
+      setStream(mediaStream)
       setIsCapturing(true)
+      setVideoReady(false)
+      setIsVideoPlaying(false)
 
       if (videoRef.current) {
-        videoRef.current.muted = true
-        videoRef.current.setAttribute("playsinline", "true")
-        videoRef.current.playsInline = true
-        videoRef.current.srcObject = mediaStream
+        const video = videoRef.current
 
-        await new Promise<void>((resolve) => {
-          const onLoaded = () => {
-            console.log("[v0] video loadedmetadata:", videoRef.current?.videoWidth, "x", videoRef.current?.videoHeight)
-            videoRef.current?.removeEventListener("loadedmetadata", onLoaded)
-            resolve()
-          }
-          videoRef.current?.addEventListener("loadedmetadata", onLoaded, { once: true })
-        })
+        video.srcObject = mediaStream
+        video.muted = true
+        video.playsInline = true
+        setVideoReady(true)
 
-        try {
-          await videoRef.current.play()
-          console.log("[v0] video.play() resolved; readyState:", videoRef.current.readyState)
-        } catch (err) {
-          console.log("[v0] video.play() rejected; will rely on user gesture:", (err as Error)?.message)
-        }
+
+        video.addEventListener('loadedmetadata', () => {
+          console.log("Video metadata loaded:", video.videoWidth, "x", video.videoHeight)
+          setVideoReady(true)
+        }, { once: true })
       }
-
-      setStream(mediaStream)
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error accessing camera:", error)
-      alert("Unable to access camera. Please check permissions.",)
+      setIsCapturing(false)
+      alert(`Camera error: ${error.message}`)
+    }
+  }
+
+  const forceVideoPlay = async () => {
+    console.log("Force playing video...")
+    const video = videoRef.current
+    setIsVideoPlaying(true)
+    if (video && stream) {
+      try {
+        // Make sure stream is assigned
+        if (!video.srcObject) {
+          video.srcObject = stream
+        }
+
+        await video.play()
+        console.log("Video playing after manual trigger!")
+        // setVideoReady(true)
+      } catch (error) {
+        console.error("Manual play failed:", error)
+      }
     }
   }
 
@@ -165,26 +158,39 @@ export function RegistrationForm({ onDataSubmit }: RegistrationFormProps) {
     }
 
     formData.append('file', photoFile)
-    const { success, destination } = await uploadImageToCloud(formData)
 
-    console.debug("\n Image destination ==> ", destination)
+    try {
+      const { success, destination } = await uploadImageToCloud(formData)
 
-    const user = new User({
-      name: formData.get("name") as string,
-      mobile: formData.get("mobile") as string,
-      gender: formData.get("gender") as "male" | "female" | "other",
-      aadharNumber: formData.get("aadharNumber") as string,
-      photoUrl: destination as string,
-    })
-    await user.save()
-    console.log("User created ==> ", user)
+      if (success) {
+        const urlofImage = await getUploadSignedUrl(destination)
+        console.debug("\n Image url ==> ", urlofImage)
+        formData.delete('file')
+        formData.append('image', destination)
+        const res = await submitRegistration(formData)
+
+        console.log("Registration log am getting ==> ", res)
+
+        if (res.success) {
+          toast.success(res.message)
+          formRef.current.reset()
+          setPhotoFile(null)
+        } else {
+          toast.warning(res.message)
+        }
+      }
+    } catch (error) {
+      toast.error(error.message)
+      console.log("Error in submit action ==> ", error)
+    }
+
   }
 
   const [state, formAction, isPending] = useActionState(registrationFormSubmission, {})
 
 
   return (
-    <form action={formAction} className="space-y-6">
+    <form action={formAction} className="space-y-6" ref={formRef}>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="space-y-2">
           <Label htmlFor="name" className="text-sm font-medium">
@@ -276,10 +282,32 @@ export function RegistrationForm({ onDataSubmit }: RegistrationFormProps) {
                   autoPlay
                   playsInline
                   muted
+                  style={{
+                    transform: 'scaleX(-1)'
+                  }}
                   className="w-full max-w-md rounded-lg border aspect-video bg-black"
+                  onLoadedMetadata={async () => {
+                    const v = videoRef.current
+                    if (v) {
+                      console.log("Video metadata loaded:", v.videoWidth, "x", v.videoHeight)
+                      try {
+                        await v.play()
+                        console.log("Video started successfully!")
+                      } catch (playError) {
+                        console.log("Autoplay blocked, requiring user click:", playError)
+                      }
+                    }
+                  }}
+                  onClick={forceVideoPlay}
+
                 />
                 <div className="flex gap-2">
-                  <Button type="button" onClick={capturePhoto} className="gap-2">
+                  <Button type="button" onClick={forceVideoPlay} className="gap-2"
+                    variant={isVideoPlaying ? "secondary" : "default"}
+                  >
+                    Start Preview
+                  </Button>
+                  <Button type="button" onClick={capturePhoto} disabled={videoRef.current?.paused} className="gap-2 cursor-pointer">
                     <Upload className="h-4 w-4" />
                     Capture Photo
                   </Button>
@@ -301,6 +329,9 @@ export function RegistrationForm({ onDataSubmit }: RegistrationFormProps) {
                     src={capturedImageData || "/placeholder.svg"}
                     alt="Captured or uploaded photo preview"
                     className="w-48 h-48 object-cover rounded-lg border"
+                    style={{
+                      transform: 'scaleX(-1)'
+                    }}
                   />
                   <Button
                     type="button"
@@ -324,8 +355,8 @@ export function RegistrationForm({ onDataSubmit }: RegistrationFormProps) {
         <canvas ref={canvasRef} className="hidden" />
       </div>
 
-      <Button type="submit" className="w-full h-12 text-base font-medium" disabled={isPending}>
-        {isPending ? <div className="flex items-center gap-4" > "Submitting..." <Loader2 className="animate-spin" /> </div> : "Submit Registration"}
+      <Button type="submit" className="w-full h-12 text-base font-medium cursor-pointer" disabled={isPending}>
+        {isPending ? <div className="flex items-center gap-4" > Submitting... <Loader2 className="animate-spin" /> </div> : "Submit Registration"}
       </Button>
     </form>
   )

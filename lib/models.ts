@@ -35,8 +35,8 @@ const userRegistrationSchema = new mongoose.Schema({
   timestamps: true
 })
 
-userRegistrationSchema.index({ mobile: 1 })
-userRegistrationSchema.index({ aadharNumber: 1 })
+// userRegistrationSchema.index({ mobile: 1 })
+// userRegistrationSchema.index({ aadharNumber: 1 })
 userRegistrationSchema.index({ createdAt: -1 })
 
 export const User = mongoose.models.User || mongoose.model('User', userRegistrationSchema)

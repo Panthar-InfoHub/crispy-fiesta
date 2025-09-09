@@ -112,7 +112,7 @@ export async function findMatch(imagePath: string) {
     const res = await axios.post(`${process.env.AI_SERVER}/match`, { photoUrl: imagePath })
 
     console.log("Response from ai server ==> ", res.data)
-    return { success: true, data: res.data.matchedUser }
+    return { success: res.data.success, data: res.data.matchedUser, message: res.data.message }
 
   } catch (error) {
     console.error("Error in finding match ==> ", JSON.stringify(error))

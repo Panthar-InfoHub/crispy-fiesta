@@ -173,9 +173,11 @@ export function FaceMatch() {
                 // console.log("finding match log am getting ==> ", res)
                 
                 if (res.success) {
-                    toast.success("User find")
+                    toast.success(res.message || "User matched successfully")
                     console.log("parsed data ==> ", res.data)
                     setUserData(res.data)
+                }else{
+                    toast.warning(res.message)
                 }
 
             }
@@ -329,8 +331,8 @@ export function FaceMatch() {
                             <Label htmlFor="gender" className="text-sm font-medium">
                                 Gender *
                             </Label>
-                            <Select name="gender">
-                                <SelectTrigger disabled={true} value={userData?.gender} className="h-11">
+                            <Select name="gender" defaultValue={userData?.gender}>
+                                <SelectTrigger disabled={true}  className="h-11">
                                     <SelectValue placeholder="Select gender" />
                                 </SelectTrigger>
                                 {/* <SelectContent>

@@ -1,5 +1,6 @@
 "use client"
 
+import { FaceMatch } from "@/components/face-match"
 import { RegistrationForm } from "@/components/registration-form"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -37,7 +38,15 @@ export default function HomePage() {
           </TabsContent>
 
           <TabsContent value="preview" className="space-y-6">
-            Hii
+            <Card className="shadow-lg">
+              <CardHeader>
+                <CardTitle className="text-xl font-semibold">Face Match</CardTitle>
+                <CardDescription>Please capture your face for verification</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <FaceMatch />
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </div>

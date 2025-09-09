@@ -5,6 +5,7 @@ import { User } from "./models"
 import { storage } from "./Storage"
 import { connectDB } from "./conenctDB"
 import { Error } from "mongoose"
+import axios from "axios"
 
 
 export async function submitRegistration(formData: FormData) {
@@ -32,7 +33,7 @@ export async function submitRegistration(formData: FormData) {
     })
     await user.save()
     console.log("User created ==> ", user)
-    return JSON.parse(JSON.stringify({ success: true, id: user._id , message : "User registered successfully" }))
+    return JSON.parse(JSON.stringify({ success: true, id: user._id, message: "User registered successfully" }))
 
   } catch (error) {
     console.error("\n Error in registration action ==> ", error)
@@ -94,4 +95,27 @@ export async function getUploadSignedUrl(filePath: string) {
 
   console.log("URl of image ===> ", url)
   return url
+}
+
+export async function updateUserEmmbedding(userId: string) {
+
+  console.log("Updating embedding for user id ==> ", userId)
+  const res = await axios.post(`${process.env.AI_SERVER}/embed`, { userId })
+
+  console.log("Response from ai server ==> ", res.data)
+  return res.data
+}
+
+export async function findMatch(imagePath: string) {
+  try {
+    console.log("Finding match for image path ==> ", imagePath)
+    const res = await axios.post(`${process.env.AI_SERVER}/match`, { photoUrl: imagePath })
+
+    console.log("Response from ai server ==> ", res.data)
+    return { success: true, data: res.data.matchedUser }
+
+  } catch (error) {
+    console.error("Error in finding match ==> ", JSON.stringify(error))
+    return { success: false, message: "Error in finding match" }
+  }
 }

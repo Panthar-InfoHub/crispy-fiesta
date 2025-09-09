@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { getUploadSignedUrl, submitRegistration, uploadImageToCloud } from "@/lib/actions"
+import { getUploadSignedUrl, submitRegistration, updateUserEmmbedding, uploadImageToCloud } from "@/lib/actions"
 import { Camera, Loader2, Upload, X } from "lucide-react"
 import { useActionState, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
@@ -172,9 +172,19 @@ export function RegistrationForm() {
         console.log("Registration log am getting ==> ", res)
 
         if (res.success) {
-          toast.success(res.message)
-          formRef.current.reset()
-          setPhotoFile(null)
+
+
+          // update embedding of user 
+
+          const result = await updateUserEmmbedding(res.id)
+          console.log("Embedding update response ==> ", result)
+
+          if (result.status === "updated") {
+            toast.success(res.message)
+            formRef.current.reset()
+            setPhotoFile(null)
+          }
+
         } else {
           toast.warning(res.message)
         }
